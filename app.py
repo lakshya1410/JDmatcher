@@ -6,7 +6,7 @@ import json
 import requests
 from typing import Dict
 #import pdfkit
-import markdown
+#import markdown
 
 def extract_text_from_pdf(file):
     try:
