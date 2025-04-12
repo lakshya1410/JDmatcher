@@ -4,9 +4,9 @@ import os
 import re
 import json
 import requests
+import time
+import random
 from typing import Dict
-#import pdfkit
-#import markdown
 
 def extract_text_from_pdf(file):
     try:
@@ -18,56 +18,13 @@ def extract_text_from_pdf(file):
         st.error(f"Error reading PDF: {e}")
         return None
 
-def convert_markdown_to_pdf(markdown_content, output_pdf_path):
-    try:
-        # Convert markdown to HTML
-        html_content = markdown.markdown(markdown_content)
-        
-        # Add some basic styling
-        styled_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>JDmatcher Report</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
-                h1 {{ color: #2c3e50; }}
-                h2 {{ color: #3498db; margin-top: 30px; }}
-                h3 {{ color: #2980b9; }}
-                .match-score {{ font-size: 24px; font-weight: bold; color: #27ae60; }}
-            </style>
-        </head>
-        <body>
-            {html_content}
-        </body>
-        </html>
-        """
-        
-        # Configuration for pdfkit
-        options = {
-            'page-size': 'A4',
-            'margin-top': '20mm',
-            'margin-right': '20mm',
-            'margin-bottom': '20mm',
-            'margin-left': '20mm',
-            'encoding': 'UTF-8',
-        }
-        
-        # Generate PDF from HTML
-        pdfkit.from_string(styled_html, output_pdf_path, options=options)
-        return True
-    except Exception as e:
-        st.error(f"Error creating PDF: {e}")
-        return False
-
 class GroqAPI:
     def __init__(self, api_key):
         self.api_key = api_key
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.model = "llama-3.3-70b-versatile"  # Using Llama 3 70B from Groq
         
-    async def generate_response(self, prompt, system_message="You are a helpful assistant."):
+    async def generate_response(self, prompt, system_message="You are a helpful assistant.", max_retries=5):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -83,19 +40,33 @@ class GroqAPI:
             "max_tokens": 2048
         }
         
-        try:
-            response = requests.post(self.api_url, headers=headers, data=json.dumps(data))
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            st.error(f"API Error: {e}")
-            return f"Error: {str(e)}"
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(self.api_url, headers=headers, data=json.dumps(data))
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:  # Too Many Requests
+                    # Calculate backoff time: starts at 2s and doubles each retry + some random jitter
+                    wait_time = (2 ** attempt) + random.uniform(1, 3)
+                    st.warning(f"Rate limit hit. Waiting {wait_time:.1f} seconds before retrying... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_time)  # Use asyncio.sleep in async functions
+                    continue
+                else:
+                    st.error(f"API Error: {e}")
+                    return f"Error: {str(e)}"
+            except Exception as e:
+                st.error(f"API Error: {e}")
+                return f"Error: {str(e)}"
+        
+        return "Error: Maximum retry attempts reached. Please try again later."
 
 async def process_resume_and_jd(api_key, resume_text, job_description):
     groq = GroqAPI(api_key)
     
     try:
         # Step 1: Parse resume
+        st.info("Analyzing resume... (Step 1/4)")
         resume_system_message = """You are an expert resume parser. Extract key information from the resume including:
         - Technical skills and proficiencies
         - Work experience and duration
@@ -109,7 +80,11 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             resume_system_message
         )
         
+        # Add delay between API calls
+        await asyncio.sleep(2)
+        
         # Step 2: Parse job description
+        st.info("Analyzing job description... (Step 2/4)")
         jd_system_message = """You are an expert job description parser. Extract key requirements from the job description including:
         - Required technical skills
         - Minimum experience needed
@@ -123,7 +98,11 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             jd_system_message
         )
         
+        # Add delay between API calls
+        await asyncio.sleep(2)
+        
         # Step 3: Analyze match
+        st.info("Calculating match score... (Step 3/4)")
         match_system_message = """You are an expert resume-job match analyzer. Compare the resume with job description requirements to determine:
         - Overall match score (percentage)
         - Key matching skills and experiences
@@ -140,7 +119,11 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             match_system_message
         )
         
+        # Add delay between API calls
+        await asyncio.sleep(2)
+        
         # Step 4: Generate improvement suggestions
+        st.info("Generating improvement suggestions... (Step 4/4)")
         improvement_system_message = """You are an expert career advisor. Based on the gaps identified, provide actionable recommendations:
         - Specific skills to acquire or highlight
         - Resume improvements and restructuring suggestions
@@ -210,6 +193,11 @@ async def main():
     st.sidebar.header("Job Description")
     job_description = st.sidebar.text_area("Paste Job Description Here:", height=300)
 
+    # Add option for reducing API calls
+    st.sidebar.header("Advanced Options")
+    simplified_mode = st.sidebar.checkbox("Use Simplified Mode (fewer API calls)", value=False, 
+                                         help="Enable this if you encounter rate limit issues")
+
     if st.sidebar.button("Analyze Match"):
         if not api_key:
             st.error("Please enter a valid Groq API key to proceed. 🙏🏻")
@@ -228,15 +216,59 @@ async def main():
             if not resume_text:
                 st.error("Failed to extract text from the uploaded resume.")
                 return
-                
-            st.write("Analyzing resume and job description...")
-            # Process resume and job description
-            results = await process_resume_and_jd(api_key, resume_text, job_description)
             
+            # Check if using simplified mode
+            if simplified_mode:
+                # Simplified approach - single API call
+                st.write("Using simplified mode with a single API call...")
+                groq = GroqAPI(api_key)
+                
+                system_message = """You are an expert resume and job description analyzer. 
+                Your task is to analyze a resume and job description to provide:
+                1. An analysis of the resume (skills, experience, education)
+                2. An analysis of the job requirements
+                3. A match score (percentage) between the resume and job
+                4. Specific matching skills and experiences
+                5. Missing skills or qualifications
+                6. Recommendations for improving the match
+                
+                Format your response with clear headings for each section."""
+                
+                prompt = f"""Resume content:
+                {resume_text}
+                
+                Job Description:
+                {job_description}
+                
+                Please provide a comprehensive analysis including match percentage, matched skills, missing skills, and improvement recommendations."""
+                
+                try:
+                    result = await groq.generate_response(prompt, system_message)
+                    
+                    # Extract match percentage
+                    match_percentage = re.search(r'(\d{1,3})%', result)
+                    percentage = int(match_percentage.group(1)) if match_percentage else 50
+                    
+                    results = {
+                        "resume_analysis": "See detailed report",
+                        "jd_analysis": "See detailed report",
+                        "match_analysis": f"Match score: {percentage}%\n\nSee detailed report for more information.",
+                        "improvement_suggestions": "See detailed report",
+                        "final_report": result
+                    }
+                    
+                except Exception as e:
+                    st.error(f"API Error: {e}")
+                    return
+            else:
+                # Use the full multi-step analysis
+                st.write("Analyzing resume and job description...")
+                results = await process_resume_and_jd(api_key, resume_text, job_description)
+                
             status.update(label="Analysis complete!", state="complete")
 
         # Display results
-        if results and results["final_report"]:
+        if results and results.get("final_report"):
             st.success("Match analysis complete!")
             
             # Create tabs for different sections
@@ -264,39 +296,22 @@ async def main():
                 st.markdown(results["final_report"])
             
             with tab3:
-                # Create files for download
-                report_md_path = "jdmatch_report.md"
-                report_pdf_path = "jdmatch_report.pdf"
+                # Create file for download
+                report_file_path = "jdmatch_report.md"
                 
-                # Save markdown report
-                with open(report_md_path, "w", encoding="utf-8") as f:
+                with open(report_file_path, "w", encoding="utf-8") as f:
                     f.write(results["final_report"])
+                st.success("Report file created!")
                 
-                # Create PDF from markdown
-                pdf_success = convert_markdown_to_pdf(results["final_report"], report_pdf_path)
-                
-                # Markdown download button
-                st.subheader("Download Options")
-                if os.path.exists(report_md_path):
-                    with open(report_md_path, "r", encoding="utf-8") as file:
+                # Ensure download button is only shown after file is created
+                if os.path.exists(report_file_path):
+                    with open(report_file_path, "r", encoding="utf-8") as file:
                         st.download_button(
-                            label="Download as Markdown (.md)",
+                            label="Download Full Analysis Report",
                             data=file,
                             file_name="jdmatch_report.md",
                             mime="text/markdown"
                         )
-                
-                # PDF download button
-                if pdf_success and os.path.exists(report_pdf_path):
-                    with open(report_pdf_path, "rb") as file:
-                        st.download_button(
-                            label="Download as PDF",
-                            data=file,
-                            file_name="jdmatch_report.pdf",
-                            mime="application/pdf"
-                        )
-                else:
-                    st.warning("PDF generation failed. You can still download the markdown version.")
 
 # Run Streamlit App
 if __name__ == "__main__":
