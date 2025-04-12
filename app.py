@@ -7,6 +7,7 @@ import requests
 import time
 import random
 from typing import Dict
+from functools import lru_cache
 
 def extract_text_from_pdf(file):
     try:
@@ -36,7 +37,8 @@ class GroqAPI:
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.7,
+            "temperature": 0,  # Changed from 0.7 to 0 for deterministic results
+            "seed": 42,        # Added fixed seed for consistency
             "max_tokens": 2048
         }
         
@@ -44,21 +46,25 @@ class GroqAPI:
             try:
                 response = requests.post(self.api_url, headers=headers, data=json.dumps(data))
                 response.raise_for_status()
+                # Success - return the result
                 return response.json()["choices"][0]["message"]["content"]
+                
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 429:  # Too Many Requests
-                    # Calculate backoff time: starts at 2s and doubles each retry + some random jitter
+                    # Calculate wait time with exponential backoff and jitter
                     wait_time = (2 ** attempt) + random.uniform(1, 3)
-                    st.warning(f"Rate limit hit. Waiting {wait_time:.1f} seconds before retrying... (Attempt {attempt+1}/{max_retries})")
-                    await asyncio.sleep(wait_time)  # Use asyncio.sleep in async functions
+                    st.warning(f"Rate limit hit. Waiting {wait_time:.2f} seconds before retry {attempt+1}/{max_retries}...")
+                    await asyncio.sleep(wait_time)  # Using asyncio.sleep instead of time.sleep
                     continue
                 else:
                     st.error(f"API Error: {e}")
                     return f"Error: {str(e)}"
+                    
             except Exception as e:
                 st.error(f"API Error: {e}")
                 return f"Error: {str(e)}"
         
+        # If we've exhausted all retries
         return "Error: Maximum retry attempts reached. Please try again later."
 
 async def process_resume_and_jd(api_key, resume_text, job_description):
@@ -66,7 +72,7 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
     
     try:
         # Step 1: Parse resume
-        st.info("Analyzing resume... (Step 1/4)")
+        st.info("Step 1/4: Analyzing your resume...")
         resume_system_message = """You are an expert resume parser. Extract key information from the resume including:
         - Technical skills and proficiencies
         - Work experience and duration
@@ -80,11 +86,11 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             resume_system_message
         )
         
-        # Add delay between API calls
+        # Add delay between requests to avoid rate limiting
         await asyncio.sleep(2)
         
         # Step 2: Parse job description
-        st.info("Analyzing job description... (Step 2/4)")
+        st.info("Step 2/4: Analyzing the job description...")
         jd_system_message = """You are an expert job description parser. Extract key requirements from the job description including:
         - Required technical skills
         - Minimum experience needed
@@ -98,16 +104,18 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             jd_system_message
         )
         
-        # Add delay between API calls
+        # Add delay between requests to avoid rate limiting
         await asyncio.sleep(2)
         
         # Step 3: Analyze match
-        st.info("Calculating match score... (Step 3/4)")
+        st.info("Step 3/4: Calculating match score and analyzing fit...")
         match_system_message = """You are an expert resume-job match analyzer. Compare the resume with job description requirements to determine:
-        - Overall match score (percentage)
+        - Overall match score as a clear percentage (e.g., "75% match")
         - Key matching skills and experiences
         - Missing skills or qualifications
         - Assessment of chances of selection
+        
+        IMPORTANT: Always start your analysis with a clear statement of the overall match percentage in the format "Match Score: XX%" on its own line.
         Provide a detailed analysis with specific examples."""
         
         match_result = await groq.generate_response(
@@ -115,15 +123,16 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
             Resume information: {resume_result}
             Job requirements: {jd_result}
             
-            Provide a detailed match analysis including percentage match and specific matching/missing elements.""",
+            Provide a detailed match analysis including percentage match and specific matching/missing elements.
+            Be consistent and deterministic in your match score calculation.""",
             match_system_message
         )
         
-        # Add delay between API calls
+        # Add delay between requests to avoid rate limiting
         await asyncio.sleep(2)
         
         # Step 4: Generate improvement suggestions
-        st.info("Generating improvement suggestions... (Step 4/4)")
+        st.info("Step 4/4: Generating improvement recommendations...")
         improvement_system_message = """You are an expert career advisor. Based on the gaps identified, provide actionable recommendations:
         - Specific skills to acquire or highlight
         - Resume improvements and restructuring suggestions
@@ -182,6 +191,10 @@ async def main():
     st.title("JDmatcher: Resume & Job Description Analyzer")
     st.subheader("Find your match score and improve your chances")
 
+    # Initialize session state for caching
+    if "analysis_results" not in st.session_state:
+        st.session_state.analysis_results = {}
+
     st.sidebar.header("Upload Files and API Key")
     api_key = st.sidebar.text_input("Enter your Groq API key:", type="password")
     if not api_key:
@@ -193,10 +206,8 @@ async def main():
     st.sidebar.header("Job Description")
     job_description = st.sidebar.text_area("Paste Job Description Here:", height=300)
 
-    # Add option for reducing API calls
-    st.sidebar.header("Advanced Options")
-    simplified_mode = st.sidebar.checkbox("Use Simplified Mode (fewer API calls)", value=False, 
-                                         help="Enable this if you encounter rate limit issues")
+    # Add a note about rate limits
+    st.sidebar.info("Note: This application makes multiple API calls to analyze your resume and job description. If you encounter rate limit errors, please wait a few minutes before trying again.")
 
     if st.sidebar.button("Analyze Match"):
         if not api_key:
@@ -207,65 +218,33 @@ async def main():
             st.error("Please upload your resume and provide a job description.")
             return
 
-        # Show processing status
-        with st.status("Processing your match...", expanded=True) as status:
-            st.write("Extracting resume content...")
-            # Extract text from resume PDF
-            resume_text = extract_text_from_pdf(resume_file)
-            
-            if not resume_text:
-                st.error("Failed to extract text from the uploaded resume.")
-                return
-            
-            # Check if using simplified mode
-            if simplified_mode:
-                # Simplified approach - single API call
-                st.write("Using simplified mode with a single API call...")
-                groq = GroqAPI(api_key)
+        # Extract text from resume PDF
+        resume_text = extract_text_from_pdf(resume_file)
+        
+        if not resume_text:
+            st.error("Failed to extract text from the uploaded resume.")
+            return
+        
+        # Create a unique key for the session state based on inputs
+        # Use hash for large inputs to avoid key size issues
+        analysis_key = f"{hash(resume_text)}_{hash(job_description)}"
+        
+        # Check if we already have results for this input combination
+        if analysis_key in st.session_state.analysis_results:
+            results = st.session_state.analysis_results[analysis_key]
+            st.success("Retrieved cached analysis!")
+        else:
+            # Show processing status
+            with st.status("Processing your match...", expanded=True) as status:
+                st.write("Extracting resume content...")
                 
-                system_message = """You are an expert resume and job description analyzer. 
-                Your task is to analyze a resume and job description to provide:
-                1. An analysis of the resume (skills, experience, education)
-                2. An analysis of the job requirements
-                3. A match score (percentage) between the resume and job
-                4. Specific matching skills and experiences
-                5. Missing skills or qualifications
-                6. Recommendations for improving the match
-                
-                Format your response with clear headings for each section."""
-                
-                prompt = f"""Resume content:
-                {resume_text}
-                
-                Job Description:
-                {job_description}
-                
-                Please provide a comprehensive analysis including match percentage, matched skills, missing skills, and improvement recommendations."""
-                
-                try:
-                    result = await groq.generate_response(prompt, system_message)
-                    
-                    # Extract match percentage
-                    match_percentage = re.search(r'(\d{1,3})%', result)
-                    percentage = int(match_percentage.group(1)) if match_percentage else 50
-                    
-                    results = {
-                        "resume_analysis": "See detailed report",
-                        "jd_analysis": "See detailed report",
-                        "match_analysis": f"Match score: {percentage}%\n\nSee detailed report for more information.",
-                        "improvement_suggestions": "See detailed report",
-                        "final_report": result
-                    }
-                    
-                except Exception as e:
-                    st.error(f"API Error: {e}")
-                    return
-            else:
-                # Use the full multi-step analysis
                 st.write("Analyzing resume and job description...")
+                # Process resume and job description
                 results = await process_resume_and_jd(api_key, resume_text, job_description)
+                # Store results in session state for future use
+                st.session_state.analysis_results[analysis_key] = results
                 
-            status.update(label="Analysis complete!", state="complete")
+                status.update(label="Analysis complete!", state="complete")
 
         # Display results
         if results and results.get("final_report"):
@@ -275,11 +254,20 @@ async def main():
             tab1, tab2, tab3 = st.tabs(["Match Analysis", "Detailed Report", "Download"])
             
             with tab1:
-                # Extract and display match percentage
-                match_text = results["match_analysis"]
-                # Look for percentage in the match analysis
-                match_percentage = re.search(r'(\d{1,3})%', match_text)
-                percentage = int(match_percentage.group(1)) if match_percentage else 50
+                # Extract and display match percentage with improved regex
+                match_text = results.get("match_analysis", "")
+                
+                # More robust regex pattern that looks for variations of match percentages
+                match_percentage = re.search(r'Match Score: (\d{1,3})%|(\d{1,3})%\s*match|match\s*(?:score|percentage|rate)?\s*(?:of|:)?\s*(\d{1,3})%', 
+                                            match_text, re.IGNORECASE)
+
+                if match_percentage:
+                    # Get the first group that matched or subsequent ones if earlier ones are None
+                    percentage = int(match_percentage.group(1) or match_percentage.group(2) or match_percentage.group(3))
+                else:
+                    # If no percentage found, extract number near "match" word
+                    number_near_match = re.search(r'match.*?(\d{1,3})|(\d{1,3}).*?match', match_text, re.IGNORECASE)
+                    percentage = int(number_near_match.group(1) or number_near_match.group(2)) if number_near_match else 50
                 
                 st.subheader("Match Score")
                 st.progress(percentage/100)
@@ -287,20 +275,20 @@ async def main():
                 
                 # Display key sections
                 st.subheader("Key Matching Points")
-                st.write(results["match_analysis"])
+                st.write(results.get("match_analysis", "No match analysis available"))
                 
                 st.subheader("Areas for Improvement")
-                st.write(results["improvement_suggestions"])
+                st.write(results.get("improvement_suggestions", "No improvement suggestions available"))
             
             with tab2:
-                st.markdown(results["final_report"])
+                st.markdown(results.get("final_report", "No report available"))
             
             with tab3:
                 # Create file for download
                 report_file_path = "jdmatch_report.md"
                 
                 with open(report_file_path, "w", encoding="utf-8") as f:
-                    f.write(results["final_report"])
+                    f.write(results.get("final_report", "No report available"))
                 st.success("Report file created!")
                 
                 # Ensure download button is only shown after file is created
@@ -312,6 +300,8 @@ async def main():
                             file_name="jdmatch_report.md",
                             mime="text/markdown"
                         )
+        else:
+            st.error("Failed to generate analysis. Please try again later.")
 
 # Run Streamlit App
 if __name__ == "__main__":
