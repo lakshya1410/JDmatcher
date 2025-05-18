@@ -214,7 +214,7 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
 
 # Streamlit App
 async def main():
-    st.title("JDmatcher: Resume & Job Description Analyzer")
+    st.title("HireWise: Resume & Job Description Analyzer")
     st.subheader("Find your match score and improve your chances")
 
     # Initialize session state for caching
