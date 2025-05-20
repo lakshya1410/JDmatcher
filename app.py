@@ -9,6 +9,7 @@ import random
 from typing import Dict
 from functools import lru_cache
 
+
 def extract_text_from_pdf(file):
     try:
         from PyPDF2 import PdfReader
@@ -94,7 +95,7 @@ class GroqAPI:
         return "Error: Maximum retry attempts reached. Please try again later."
 
 async def process_resume_and_jd(api_key, resume_text, job_description):
-    groq = GroqAPI(api_key)
+    groq = GroqAPI(your_api_key)
     
     try:
         # Step 1: Parse resume
