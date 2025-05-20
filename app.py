@@ -95,7 +95,7 @@ class GroqAPI:
         return "Error: Maximum retry attempts reached. Please try again later."
 
 async def process_resume_and_jd(api_key, resume_text, job_description):
-    groq = GroqAPI(your_api_key)
+    groq = GroqAPI(api_key)
     
     try:
         # Step 1: Parse resume
