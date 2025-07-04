@@ -9,6 +9,224 @@ import random
 from typing import Dict
 from functools import lru_cache
 
+# Configure page
+st.set_page_config(
+    page_title="HireWise - Resume & Job Description Analyzer",
+    page_icon="👩🏻‍🎓",
+    layout="wide"
+)
+
+# Custom CSS for modern color theme
+st.markdown("""
+<style>
+    /* Main app styling */
+    .stApp {
+        background: linear-gradient(135deg, #0f1419 0%, #1a2332 100%);
+        color: white;
+    }
+    
+    /* Header styling */
+    .main-header {
+        text-align: center;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+        background: rgba(15, 20, 25, 0.8);
+        border-radius: 15px;
+        border: 1px solid rgba(0, 212, 255, 0.3);
+    }
+    
+    .main-title {
+        font-size: 3rem;
+        font-weight: 800;
+        color: #00d4ff;
+        margin-bottom: 1rem;
+        text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+    }
+    
+    .main-subtitle {
+        font-size: 1.2rem;
+        color: rgba(255, 255, 255, 0.8);
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background: rgba(15, 20, 25, 0.9);
+        border-right: 1px solid rgba(0, 212, 255, 0.3);
+    }
+    
+    /* Text inputs */
+    .stTextInput input {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+        color: white !important;
+    }
+    
+    .stTextInput input:focus {
+        border-color: #00d4ff !important;
+        box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2) !important;
+    }
+    
+    /* Text area */
+    .stTextArea textarea {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+        color: white !important;
+    }
+    
+    .stTextArea textarea:focus {
+        border-color: #00d4ff !important;
+        box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2) !important;
+    }
+    
+    /* File uploader */
+    .stFileUploader {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 2px dashed rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+        padding: 1rem !important;
+    }
+    
+    .stFileUploader:hover {
+        border-color: rgba(0, 212, 255, 0.6) !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+    }
+    
+    /* Buttons */
+    .stButton button {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 0.75rem 2rem !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .stButton button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3) !important;
+    }
+    
+    /* Progress bar */
+    .stProgress .st-bo {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%) !important;
+        border-radius: 10px !important;
+    }
+    
+    .stProgress {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border-radius: 8px !important;
+        padding: 0.25rem !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent !important;
+        color: rgba(255, 255, 255, 0.7) !important;
+        border-radius: 6px !important;
+        padding: 0.5rem 1rem !important;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%) !important;
+        color: white !important;
+    }
+    
+    /* Success/Info/Warning messages */
+    .stSuccess {
+        background: rgba(0, 212, 255, 0.1) !important;
+        border: 1px solid rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+        color: #00d4ff !important;
+    }
+    
+    .stInfo {
+        background: rgba(0, 212, 255, 0.1) !important;
+        border: 1px solid rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+        color: #00d4ff !important;
+    }
+    
+    .stWarning {
+        background: rgba(255, 193, 7, 0.1) !important;
+        border: 1px solid rgba(255, 193, 7, 0.3) !important;
+        border-radius: 8px !important;
+        color: #ffc107 !important;
+    }
+    
+    .stError {
+        background: rgba(220, 53, 69, 0.1) !important;
+        border: 1px solid rgba(220, 53, 69, 0.3) !important;
+        border-radius: 8px !important;
+        color: #dc3545 !important;
+    }
+    
+    /* Sidebar headers */
+    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 {
+        color: #00d4ff !important;
+    }
+    
+    /* Download buttons */
+    .stDownloadButton button {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    
+    .stDownloadButton button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3) !important;
+    }
+    
+    /* Status container */
+    .stStatus {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(0, 212, 255, 0.3) !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Columns styling */
+    .stColumns {
+        gap: 2rem !important;
+    }
+    
+    /* Subheader styling */
+    .stSubheader {
+        color: #00d4ff !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .main-title {
+            font-size: 2rem;
+        }
+        
+        .main-subtitle {
+            font-size: 1rem;
+        }
+        
+        .main-header {
+            padding: 1rem;
+        }
+    }
+</style>
+""", unsafe_allow_html=True)
+
 def extract_text_from_pdf(file):
     try:
         from PyPDF2 import PdfReader
@@ -41,7 +259,7 @@ def convert_markdown_to_text(markdown_content):
     text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
     
     # Add a separator line at the end
-    text += "\n\n" + "="*60 + "\nGenerated by JDmatcher\n" + "="*60
+    text += "\n\n" + "="*60 + "\nGenerated by HireWise\n" + "="*60
     
     return text
 
@@ -192,7 +410,7 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
 ## Improvement Recommendations
 {improvement_result}
 
-*Report generated by JDmatcher*
+*Report generated by HireWise*
 """
         
         return {
@@ -214,8 +432,14 @@ async def process_resume_and_jd(api_key, resume_text, job_description):
 
 # Streamlit App
 async def main():
-    st.title("HireWise: Resume & Job Description Analyzer")
-    st.subheader("Find your match score and improve your chances")
+    # Add header
+    st.markdown("""
+    <div class="main-header">
+        <h1 class="main-title">👩🏻‍🎓 HireWise</h1>
+        <p class="main-subtitle">Get Your Resume-JD Match Score</p>
+        <p style="color: rgba(255, 255, 255, 0.7); font-size: 1rem;">Find your match score and improve your chances of getting hired</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Initialize session state for caching
     if "analysis_results" not in st.session_state:
@@ -314,32 +538,32 @@ async def main():
                 markdown_report = results.get("final_report", "No report available")
                 
                 # Create markdown file for download
-                with open("jdmatch_report.md", "w", encoding="utf-8") as f:
+                with open("hirewise_report.md", "w", encoding="utf-8") as f:
                     f.write(markdown_report)
                 
                 # Create plain text file for download
                 plain_text_report = convert_markdown_to_text(markdown_report)
-                with open("jdmatch_report.txt", "w", encoding="utf-8") as f:
+                with open("hirewise_report.txt", "w", encoding="utf-8") as f:
                     f.write(plain_text_report)
                 
                 # Add download buttons
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    with open("jdmatch_report.md", "r", encoding="utf-8") as file:
+                    with open("hirewise_report.md", "r", encoding="utf-8") as file:
                         st.download_button(
                             label="Download as Markdown",
                             data=file,
-                            file_name="jdmatch_report.md",
+                            file_name="hirewise_report.md",
                             mime="text/markdown"
                         )
                 
                 with col2:
-                    with open("jdmatch_report.txt", "r", encoding="utf-8") as file:
+                    with open("hirewise_report.txt", "r", encoding="utf-8") as file:
                         st.download_button(
                             label="Download as Text File",
                             data=file,
-                            file_name="jdmatch_report.txt",
+                            file_name="hirewise_report.txt",
                             mime="text/plain"
                         )
         else:
